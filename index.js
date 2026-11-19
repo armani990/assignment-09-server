@@ -318,6 +318,183 @@ app.patch(
   }
 );
 
+/* ================================
+   VENDOR: GET OWN MENU ITEMS
+================================ */
+
+app.get(
+  "/vendor/menu-items",
+  verifyToken,
+  requireRole("vendor"),
+  async (req, res) => {
+    try {
+      const menuItems = await menuItemsCollection
+        .find({
+          vendorId: req.authUser._id,
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.status(200).json(menuItems);
+    } catch (error) {
+      console.error("Get Vendor Menu Items Error:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch your menu items",
+      });
+    }
+  }
+);
+
+/* ================================
+   VENDOR: UPDATE OWN MENU ITEM
+================================ */
+
+app.put(
+  "/vendor/menu-items/:id",
+  verifyToken,
+  requireRole("vendor"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const {
+        itemName,
+        category,
+        description,
+        price,
+        location,
+        images,
+      } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({
+          message: "Invalid menu item ID",
+        });
+      }
+
+      if (
+        !itemName?.trim() ||
+        !category?.trim() ||
+        !description?.trim() ||
+        !location?.trim() ||
+        !Array.isArray(images) ||
+        images.length === 0
+      ) {
+        return res.status(400).json({
+          message: "All fields and at least one image are required",
+        });
+      }
+
+      const itemPrice = Number(price);
+
+      if (!Number.isFinite(itemPrice) || itemPrice <= 0) {
+        return res.status(400).json({
+          message: "Price must be a positive number",
+        });
+      }
+
+      const validImages = images.every((image) => {
+        if (typeof image !== "string") return false;
+
+        try {
+          const url = new URL(image);
+
+          return (
+            url.protocol === "https:" &&
+            (url.hostname === "ibb.co" ||
+              url.hostname.endsWith(".ibb.co"))
+          );
+        } catch {
+          return false;
+        }
+      });
+
+      if (!validImages) {
+        return res.status(400).json({
+          message: "Please provide valid ImgBB image URLs",
+        });
+      }
+
+      const result = await menuItemsCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          vendorId: req.authUser._id,
+        },
+        {
+          $set: {
+            itemName: itemName.trim(),
+            category: category.trim(),
+            description: description.trim(),
+            price: itemPrice,
+            location: location.trim(),
+            images,
+            status: "pending",
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({
+          message: "Menu item not found or you do not own this item",
+        });
+      }
+
+      res.status(200).json({
+        message: "Menu item updated and sent for admin approval",
+      });
+    } catch (error) {
+      console.error("Update Vendor Menu Item Error:", error);
+
+      res.status(500).json({
+        message: "Failed to update menu item",
+      });
+    }
+  }
+);
+
+/* ================================
+   VENDOR: DELETE OWN MENU ITEM
+================================ */
+
+app.delete(
+  "/vendor/menu-items/:id",
+  verifyToken,
+  requireRole("vendor"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({
+          message: "Invalid menu item ID",
+        });
+      }
+
+      const result = await menuItemsCollection.deleteOne({
+        _id: new ObjectId(id),
+        vendorId: req.authUser._id,
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).json({
+          message: "Menu item not found or you do not own this item",
+        });
+      }
+
+      res.status(200).json({
+        message: "Menu item deleted successfully",
+      });
+    } catch (error) {
+      console.error("Delete Vendor Menu Item Error:", error);
+
+      res.status(500).json({
+        message: "Failed to delete menu item",
+      });
+    }
+  }
+);
+
 
 
 // Start Server
