@@ -496,6 +496,31 @@ app.delete(
 );
 
 
+/* ================================
+   PUBLIC: GET FEATURED MENU ITEMS
+================================ */
+
+app.get("/menu-items/featured", async (req, res) => {
+  try {
+    const menuItems = await menuItemsCollection
+      .find({
+        status: "approved",
+      })
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .toArray();
+
+    res.status(200).json(menuItems);
+  } catch (error) {
+    console.error("Get Featured Menu Items Error:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch featured menu items",
+    });
+  }
+});
+
+
 
 // Start Server
 app.listen(port, () => {
