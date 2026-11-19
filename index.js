@@ -220,6 +220,106 @@ app.post(
   }
 );
 
+
+// Admin: Get All Menu Items
+app.get(
+  "/admin/menu-items",
+  verifyToken,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const { status } = req.query;
+
+      const filter = {};
+
+      if (status) {
+        const allowedStatuses = [
+          "pending",
+          "approved",
+          "rejected",
+          "inactive",
+        ];
+
+        if (!allowedStatuses.includes(status)) {
+          return res.status(400).json({
+            message: "Invalid menu item status",
+          });
+        }
+
+        filter.status = status;
+      }
+
+      const menuItems = await menuItemsCollection
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.status(200).json(menuItems);
+    } catch (error) {
+      console.error("Get Menu Items Error:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch menu items",
+      });
+    }
+  }
+);
+
+// Admin: Update Menu Item Status
+app.patch(
+  "/admin/menu-items/:id/status",
+  verifyToken,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({
+          message: "Invalid menu item ID",
+        });
+      }
+
+      const allowedStatuses = ["approved", "rejected"];
+
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          message: "Status must be approved or rejected",
+        });
+      }
+
+      const result = await menuItemsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({
+          message: "Menu item not found",
+        });
+      }
+
+      res.status(200).json({
+        message: `Menu item ${status} successfully`,
+      });
+    } catch (error) {
+      console.error("Update Menu Item Status Error:", error);
+
+      res.status(500).json({
+        message: "Failed to update menu item status",
+      });
+    }
+  }
+);
+
+
+
 // Start Server
 app.listen(port, () => {
   console.log(`PizzaHub server is running on port ${port}`);
