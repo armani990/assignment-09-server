@@ -607,7 +607,7 @@ app.post(
           message: "Invalid delivery date",
         });
       }
-      
+
       if (deliveryAddress.trim().length > 500) {
         return res.status(400).json({
           message: "Delivery address is too long",
@@ -826,6 +826,161 @@ app.patch(
 
       res.status(500).json({
         message: "Failed to cancel order",
+      });
+    }
+  }
+);
+
+/* VENDOR: GET OWN CUSTOMER ORDERS */
+app.get(
+  "/vendor/orders",
+  verifyToken,
+  requireRole("vendor"),
+  async (req, res) => {
+    try {
+      const orders = await ordersCollection
+        .aggregate([
+          {
+            $match: {
+              vendorId: req.authUser._id,
+            },
+          },
+          {
+            $sort: {
+              createdAt: -1,
+            },
+          },
+          {
+            $lookup: {
+              from: "menuItems",
+              localField: "itemId",
+              foreignField: "_id",
+              as: "item",
+            },
+          },
+          {
+            $unwind: {
+              path: "$item",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $lookup: {
+              from: "user",
+              localField: "customerId",
+              foreignField: "_id",
+              as: "customer",
+            },
+          },
+          {
+            $unwind: {
+              path: "$customer",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $project: {
+              itemId: 1,
+              vendorId: 1,
+              customerId: 1,
+              deliveryDate: 1,
+              deliveryAddress: 1,
+              message: 1,
+              status: 1,
+              createdAt: 1,
+              updatedAt: 1,
+
+              item: {
+                itemName: "$item.itemName",
+                images: "$item.images",
+                price: "$item.price",
+                category: "$item.category",
+                location: "$item.location",
+              },
+
+              customer: {
+                name: "$customer.name",
+                email: "$customer.email",
+              },
+            },
+          },
+        ])
+        .toArray();
+
+      res.status(200).json(orders);
+    } catch (error) {
+      console.error("Get Vendor Orders Error:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch vendor orders",
+      });
+    }
+  }
+);
+
+/* VENDOR: UPDATE OWN ORDER STATUS */
+app.patch(
+  "/vendor/orders/:id/status",
+  verifyToken,
+  requireRole("vendor"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({
+          message: "Invalid order ID",
+        });
+      }
+
+      const allowedStatuses = ["accepted", "rejected"];
+
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          message: "Status must be accepted or rejected",
+        });
+      }
+
+      const result = await ordersCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          vendorId: req.authUser._id,
+          status: "pending",
+        },
+        {
+          $set: {
+            status,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        const existingOrder = await ordersCollection.findOne({
+          _id: new ObjectId(id),
+          vendorId: req.authUser._id,
+        });
+
+        if (!existingOrder) {
+          return res.status(404).json({
+            message: "Order not found",
+          });
+        }
+
+        return res.status(409).json({
+          message: "Only pending orders can be updated",
+        });
+      }
+
+      res.status(200).json({
+        message: `Order ${status} successfully`,
+      });
+    } catch (error) {
+      console.error("Update Vendor Order Status Error:", error);
+
+      res.status(500).json({
+        message: "Failed to update order status",
       });
     }
   }
