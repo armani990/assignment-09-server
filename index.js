@@ -46,6 +46,7 @@ const database = connectedClient.db("pizzahub");
 // Collections
 const usersCollection = database.collection("user");
 const menuItemsCollection = database.collection("menuItems");
+const ordersCollection = database.collection("orders");
 
 // JWT Verification Middleware
 async function verifyToken(req, res, next) {
@@ -519,6 +520,179 @@ app.get("/menu-items/featured", async (req, res) => {
     });
   }
 });
+
+
+/* PUBLIC: GET SINGLE APPROVED MENU ITEM */
+app.get("/menu-items/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Invalid menu item ID",
+      });
+    }
+
+    const menuItem = await menuItemsCollection.findOne({
+      _id: new ObjectId(id),
+      status: "approved",
+    });
+
+    if (!menuItem) {
+      return res.status(404).json({
+        message: "Menu item not found",
+      });
+    }
+
+    const vendor = await usersCollection.findOne({
+      _id: menuItem.vendorId,
+    });
+
+    res.status(200).json({
+      ...menuItem,
+      vendor: {
+        name: vendor?.businessName || vendor?.name || "PizzaHub Vendor",
+        email: vendor?.email || "",
+      },
+    });
+  } catch (error) {
+    console.error("Get Menu Item Details Error:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch menu item details",
+    });
+  }
+});
+
+
+
+/* CUSTOMER: PLACE ORDER */
+app.post(
+  "/orders",
+  verifyToken,
+  requireRole("customer"),
+  async (req, res) => {
+    try {
+      const {
+        itemId,
+        deliveryDate,
+        deliveryAddress,
+        message,
+      } = req.body;
+
+      if (
+        !ObjectId.isValid(itemId) ||
+        !deliveryDate ||
+        !deliveryAddress?.trim()
+      ) {
+        return res.status(400).json({
+          message: "Item, delivery date and address are required",
+        });
+      }
+
+      // Validate date format
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
+        return res.status(400).json({
+          message: "Invalid delivery date",
+        });
+      }
+
+      const parsedDate = new Date(`${deliveryDate}T00:00:00.000Z`);
+
+      if (
+        Number.isNaN(parsedDate.getTime()) ||
+        parsedDate.toISOString().slice(0, 10) !== deliveryDate
+      ) {
+        return res.status(400).json({
+          message: "Invalid delivery date",
+        });
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+
+      if (deliveryDate < today) {
+        return res.status(400).json({
+          message: "Delivery date cannot be in the past",
+        });
+      }
+
+      if (deliveryAddress.trim().length > 500) {
+        return res.status(400).json({
+          message: "Delivery address is too long",
+        });
+      }
+
+      if (
+        message !== undefined &&
+        (typeof message !== "string" || message.length > 500)
+      ) {
+        return res.status(400).json({
+          message: "Message must be 500 characters or fewer",
+        });
+      }
+
+      // Get item from database
+      const menuItem = await menuItemsCollection.findOne({
+        _id: new ObjectId(itemId),
+        status: "approved",
+      });
+
+      if (!menuItem) {
+        return res.status(404).json({
+          message: "This pizza is not available for ordering",
+        });
+      }
+
+      // Prevent ordering own item
+      if (
+        String(menuItem.vendorId) === String(req.authUser._id)
+      ) {
+        return res.status(403).json({
+          message: "You cannot order your own item",
+        });
+      }
+
+      // Prevent duplicate active orders for same date
+      const existingOrder = await ordersCollection.findOne({
+        itemId: menuItem._id,
+        customerId: req.authUser._id,
+        deliveryDate,
+        status: { $in: ["pending", "accepted"] },
+      });
+
+      if (existingOrder) {
+        return res.status(409).json({
+          message: "You already have an active order for this pizza on this date",
+        });
+      }
+
+      // Vendor ID comes from database, never from client
+      const newOrder = {
+        itemId: menuItem._id,
+        vendorId: menuItem.vendorId,
+        customerId: req.authUser._id,
+        deliveryDate,
+        deliveryAddress: deliveryAddress.trim(),
+        message: message?.trim() || "",
+        status: "pending",
+        createdAt: new Date(),
+      };
+
+      const result = await ordersCollection.insertOne(newOrder);
+
+      res.status(201).json({
+        message: "Order placed successfully",
+        orderId: result.insertedId,
+      });
+    } catch (error) {
+      console.error("Place Order Error:", error);
+
+      res.status(500).json({
+        message: "Failed to place order",
+      });
+    }
+  }
+);
 
 
 /* PUBLIC: GET ALL APPROVED MENU ITEMS */
