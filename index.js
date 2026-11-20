@@ -521,6 +521,78 @@ app.get("/menu-items/featured", async (req, res) => {
 });
 
 
+/* PUBLIC: GET ALL APPROVED MENU ITEMS */
+app.get("/menu-items", async (req, res) => {
+  try {
+    const { search, category, location, sort } = req.query;
+
+    const filter = {
+      status: "approved",
+    };
+
+    // Search by item name
+    if (search?.trim()) {
+      const escapedSearch = search.trim().replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+      filter.itemName = {
+        $regex: escapedSearch,
+        $options: "i",
+      };
+    }
+
+    // Filter by category
+    if (category?.trim()) {
+      filter.category = {
+        $regex: `^${category.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+        $options: "i",
+      };
+    }
+
+    // Filter by location
+    if (location?.trim()) {
+      const escapedLocation = location.trim().replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+      filter.location = {
+        $regex: escapedLocation,
+        $options: "i",
+      };
+    }
+
+    // Sorting
+    const sortOptions = {
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+    };
+
+    if (sort && !sortOptions[sort]) {
+      return res.status(400).json({
+        message: "Invalid sort option",
+      });
+    }
+
+    const sortQuery = sortOptions[sort] || { createdAt: -1 };
+
+    const menuItems = await menuItemsCollection
+      .find(filter)
+      .sort(sortQuery)
+      .toArray();
+
+    res.status(200).json(menuItems);
+  } catch (error) {
+    console.error("Get Public Menu Items Error:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch menu items",
+    });
+  }
+});
+
 
 // Start Server
 app.listen(port, () => {
