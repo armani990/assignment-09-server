@@ -607,15 +607,7 @@ app.post(
           message: "Invalid delivery date",
         });
       }
-
-      const today = new Date().toISOString().slice(0, 10);
-
-      if (deliveryDate < today) {
-        return res.status(400).json({
-          message: "Delivery date cannot be in the past",
-        });
-      }
-
+      
       if (deliveryAddress.trim().length > 500) {
         return res.status(400).json({
           message: "Delivery address is too long",
