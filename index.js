@@ -694,6 +694,150 @@ app.post(
   }
 );
 
+/* CUSTOMER: GET OWN ORDERS */
+app.get(
+  "/customer/orders",
+  verifyToken,
+  requireRole("customer"),
+  async (req, res) => {
+    try {
+      const orders = await ordersCollection
+        .aggregate([
+          {
+            $match: {
+              customerId: req.authUser._id,
+            },
+          },
+          {
+            $sort: {
+              createdAt: -1,
+            },
+          },
+          {
+            $lookup: {
+              from: "menuItems",
+              localField: "itemId",
+              foreignField: "_id",
+              as: "item",
+            },
+          },
+          {
+            $unwind: {
+              path: "$item",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $lookup: {
+              from: "user",
+              localField: "vendorId",
+              foreignField: "_id",
+              as: "vendor",
+            },
+          },
+          {
+            $unwind: {
+              path: "$vendor",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $project: {
+              itemId: 1,
+              vendorId: 1,
+              customerId: 1,
+              deliveryDate: 1,
+              deliveryAddress: 1,
+              message: 1,
+              status: 1,
+              createdAt: 1,
+
+              item: {
+                itemName: "$item.itemName",
+                images: "$item.images",
+                price: "$item.price",
+                category: "$item.category",
+              },
+
+              vendor: {
+                name: "$vendor.name",
+                businessName: "$vendor.businessName",
+                email: "$vendor.email",
+              },
+            },
+          },
+        ])
+        .toArray();
+
+      res.status(200).json(orders);
+    } catch (error) {
+      console.error("Get Customer Orders Error:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch customer orders",
+      });
+    }
+  }
+);
+
+/* CUSTOMER: CANCEL OWN PENDING ORDER */
+app.patch(
+  "/customer/orders/:id/cancel",
+  verifyToken,
+  requireRole("customer"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({
+          message: "Invalid order ID",
+        });
+      }
+
+      const result = await ordersCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          customerId: req.authUser._id,
+          status: "pending",
+        },
+        {
+          $set: {
+            status: "cancelled",
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        const existingOrder = await ordersCollection.findOne({
+          _id: new ObjectId(id),
+          customerId: req.authUser._id,
+        });
+
+        if (!existingOrder) {
+          return res.status(404).json({
+            message: "Order not found",
+          });
+        }
+
+        return res.status(409).json({
+          message: "Only pending orders can be cancelled",
+        });
+      }
+
+      res.status(200).json({
+        message: "Order cancelled successfully",
+      });
+    } catch (error) {
+      console.error("Cancel Customer Order Error:", error);
+
+      res.status(500).json({
+        message: "Failed to cancel order",
+      });
+    }
+  }
+);
 
 /* PUBLIC: GET ALL APPROVED MENU ITEMS */
 app.get("/menu-items", async (req, res) => {
