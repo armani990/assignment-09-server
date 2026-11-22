@@ -497,10 +497,9 @@ app.delete(
 );
 
 
-/* ================================
-   PUBLIC: GET FEATURED MENU ITEMS
-================================ */
 
+
+/* PUBLIC: GET FEATURED MENU ITEMS */
 app.get("/menu-items/featured", async (req, res) => {
   try {
     const menuItems = await menuItemsCollection
@@ -511,7 +510,33 @@ app.get("/menu-items/featured", async (req, res) => {
       .limit(6)
       .toArray();
 
-    res.status(200).json(menuItems);
+    const vendorIds = [
+      ...new Map(
+        menuItems
+          .filter((item) => item.vendorId)
+          .map((item) => [String(item.vendorId), item.vendorId])
+      ).values(),
+    ];
+
+    const vendors = await usersCollection
+      .find({ _id: { $in: vendorIds } })
+      .toArray();
+
+    const vendorMap = new Map(
+      vendors.map((vendor) => [
+        String(vendor._id),
+        vendor.businessName || vendor.name || "PizzaHub Vendor",
+      ])
+    );
+
+    const featuredItems = menuItems.map((item) => ({
+      ...item,
+      vendor: {
+        name: vendorMap.get(String(item.vendorId)) || "PizzaHub Vendor",
+      },
+    }));
+
+    res.status(200).json(featuredItems);
   } catch (error) {
     console.error("Get Featured Menu Items Error:", error);
 
@@ -520,6 +545,7 @@ app.get("/menu-items/featured", async (req, res) => {
     });
   }
 });
+
 
 
 /* PUBLIC: GET SINGLE APPROVED MENU ITEM */
@@ -987,6 +1013,8 @@ app.patch(
 );
 
 /* PUBLIC: GET ALL APPROVED MENU ITEMS */
+
+/* PUBLIC: GET MENU ITEMS */
 app.get("/menu-items", async (req, res) => {
   try {
     const { search, category, location, sort } = req.query;
@@ -1048,7 +1076,37 @@ app.get("/menu-items", async (req, res) => {
       .sort(sortQuery)
       .toArray();
 
-    res.status(200).json(menuItems);
+    // Get unique vendor IDs
+    const vendorIds = [
+      ...new Map(
+        menuItems
+          .filter((item) => item.vendorId)
+          .map((item) => [String(item.vendorId), item.vendorId])
+      ).values(),
+    ];
+
+    // Fetch vendors
+    const vendors = await usersCollection
+      .find({ _id: { $in: vendorIds } })
+      .toArray();
+
+    // Create vendor name lookup
+    const vendorMap = new Map(
+      vendors.map((vendor) => [
+        String(vendor._id),
+        vendor.businessName || vendor.name || "PizzaHub Vendor",
+      ])
+    );
+
+    // Attach vendor information to menu items
+    const menuItemsWithVendors = menuItems.map((item) => ({
+      ...item,
+      vendor: {
+        name: vendorMap.get(String(item.vendorId)) || "PizzaHub Vendor",
+      },
+    }));
+
+    res.status(200).json(menuItemsWithVendors);
   } catch (error) {
     console.error("Get Public Menu Items Error:", error);
 
@@ -1057,6 +1115,7 @@ app.get("/menu-items", async (req, res) => {
     });
   }
 });
+
 
 
 // Start Server
