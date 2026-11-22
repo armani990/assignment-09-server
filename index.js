@@ -4,12 +4,14 @@ import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import Stripe from "stripe";
 
 const app = express();
 const port = process.env.PORT || 5000;
 
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
 // Middleware
-app.use(express.json());
 app.use(cors());
 
 // JWT Configuration
@@ -47,6 +49,19 @@ const database = connectedClient.db("pizzahub");
 const usersCollection = database.collection("user");
 const menuItemsCollection = database.collection("menuItems");
 const ordersCollection = database.collection("orders");
+
+const transactionsCollection = database.collection("transactions");
+const webhookEventsCollection = database.collection("webhookEvents");
+
+await webhookEventsCollection.createIndex(
+  { eventId: 1 },
+  { unique: true }
+);
+
+// INSERT THE STRIPE WEBHOOK ROUTE HERE
+
+// JSON Middleware (must stay after the Stripe webhook route)
+app.use(express.json());
 
 // JWT Verification Middleware
 async function verifyToken(req, res, next) {
@@ -1363,6 +1378,7 @@ app.patch(
     }
   }
 );
+
 
 // Start Server
 app.listen(port, () => {
