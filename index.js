@@ -58,7 +58,6 @@ await webhookEventsCollection.createIndex(
   { unique: true }
 );
 
-// INSERT THE STRIPE WEBHOOK ROUTE HERE
 
 /* STRIPE: VERIFY WEBHOOK AND ACTIVATE PREMIUM */
 
@@ -1528,6 +1527,100 @@ app.patch(
   }
 );
 
+/* VENDOR: CREATE PREMIUM SUBSCRIPTION CHECKOUT */
+
+app.post(
+  "/vendor/subscription/checkout",
+  verifyToken,
+  requireRole("vendor"),
+  async (req, res) => {
+    try {
+      const clientUrl = process.env.CLIENT_URL;
+
+      if (!clientUrl) {
+        return res.status(500).json({
+          message: "Client URL is not configured",
+        });
+      }
+
+      // Prevent duplicate subscription checkout for active Premium vendors
+      const isPremiumActive =
+        req.authUser.subscriptionPlan === "premium" &&
+        req.authUser.subscriptionExpiresAt &&
+        new Date(req.authUser.subscriptionExpiresAt) > new Date();
+
+      if (isPremiumActive) {
+        return res.status(400).json({
+          message: "You already have an active Premium subscription",
+        });
+      }
+
+      // Create Stripe Checkout Session
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+
+        customer_email: req.authUser.email,
+
+        client_reference_id: String(req.authUser._id),
+
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: "PizzaHub Premium Vendor Plan",
+                description: "Unlimited active menu items",
+              },
+              unit_amount: 999,
+              recurring: {
+                interval: "month",
+              },
+            },
+            quantity: 1,
+          },
+        ],
+
+        metadata: {
+          vendorId: String(req.authUser._id),
+          plan: "premium",
+        },
+
+        subscription_data: {
+          metadata: {
+            vendorId: String(req.authUser._id),
+            plan: "premium",
+          },
+        },
+
+        success_url: `${clientUrl}/dashboard/vendor/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
+
+        cancel_url: `${clientUrl}/dashboard/vendor/subscription/cancel`,
+      });
+
+      // Save pending transaction
+      await transactionsCollection.insertOne({
+        vendorId: req.authUser._id,
+        stripeSessionId: session.id,
+        amount: 9.99,
+        currency: "usd",
+        plan: "premium",
+        status: "pending",
+        createdAt: new Date(),
+      });
+
+      res.status(200).json({
+        message: "Checkout session created successfully",
+        url: session.url,
+      });
+    } catch (error) {
+      console.error("Create Subscription Checkout Error:", error);
+
+      res.status(500).json({
+        message: "Failed to create subscription checkout",
+      });
+    }
+  }
+);
 
 // Start Server
 app.listen(port, () => {
