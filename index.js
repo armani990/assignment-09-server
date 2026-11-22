@@ -1292,6 +1292,78 @@ app.get(
   }
 );
 
+
+/* PROFILE: GET CURRENT USER PROFILE */
+
+app.get("/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, email, image, role, businessName } = req.authUser;
+
+    res.status(200).json({
+      name,
+      email,
+      image: image || "",
+      role,
+      businessName: businessName || "",
+    });
+  } catch (error) {
+    console.error("Get Profile Error:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch profile",
+    });
+  }
+});
+
+/* VENDOR: UPDATE BUSINESS NAME */
+
+app.patch(
+  "/profile/business-name",
+  verifyToken,
+  requireRole("vendor"),
+  async (req, res) => {
+    try {
+      const { businessName } = req.body;
+
+      if (
+        typeof businessName !== "string" ||
+        !businessName.trim()
+      ) {
+        return res.status(400).json({
+          message: "Business name is required",
+        });
+      }
+
+      if (businessName.trim().length > 100) {
+        return res.status(400).json({
+          message: "Business name must be 100 characters or fewer",
+        });
+      }
+
+      await usersCollection.updateOne(
+        { _id: req.authUser._id },
+        {
+          $set: {
+            businessName: businessName.trim(),
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      res.status(200).json({
+        message: "Business name updated successfully",
+        businessName: businessName.trim(),
+      });
+    } catch (error) {
+      console.error("Update Business Name Error:", error);
+
+      res.status(500).json({
+        message: "Failed to update business name",
+      });
+    }
+  }
+);
+
 // Start Server
 app.listen(port, () => {
   console.log(`PizzaHub server is running on port ${port}`);
