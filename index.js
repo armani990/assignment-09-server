@@ -60,6 +60,155 @@ await webhookEventsCollection.createIndex(
 
 // INSERT THE STRIPE WEBHOOK ROUTE HERE
 
+/* STRIPE: VERIFY WEBHOOK AND ACTIVATE PREMIUM */
+
+app.post(
+  "/webhook/stripe",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const signature = req.headers["stripe-signature"];
+
+    let event;
+
+    // Verify Stripe webhook signature
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (error) {
+      console.error("Stripe Webhook Signature Error:", error.message);
+
+      return res.status(400).send(`Webhook Error: ${error.message}`);
+    }
+
+    try {
+      // Prevent duplicate event processing
+      const existingEvent = await webhookEventsCollection.findOne({
+        eventId: event.id,
+      });
+
+      if (existingEvent) {
+        return res.status(200).json({
+          received: true,
+          duplicate: true,
+        });
+      }
+
+      // Activate Premium after successful Checkout
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
+
+        if (
+          session.mode === "subscription" &&
+          ["paid", "no_payment_required"].includes(session.payment_status)
+        ) {
+          const vendorId = session.metadata?.vendorId;
+
+          const subscriptionId =
+            typeof session.subscription === "string"
+              ? session.subscription
+              : session.subscription?.id;
+
+          if (ObjectId.isValid(vendorId) && subscriptionId) {
+            const subscription =
+              await stripe.subscriptions.retrieve(subscriptionId);
+
+            if (["active", "trialing"].includes(subscription.status)) {
+              await usersCollection.updateOne(
+                {
+                  _id: new ObjectId(vendorId),
+                  role: "vendor",
+                },
+                {
+                  $set: {
+                    subscriptionPlan: "premium",
+                    subscriptionExpiresAt: new Date(
+                      subscription.current_period_end * 1000
+                    ),
+                    stripeSubscriptionId: subscription.id,
+                    stripeCustomerId: session.customer,
+                    updatedAt: new Date(),
+                  },
+                }
+              );
+
+              await transactionsCollection.updateOne(
+                {
+                  stripeSessionId: session.id,
+                },
+                {
+                  $set: {
+                    status: "succeeded",
+                    stripeSubscriptionId: subscription.id,
+                    paidAt: new Date(),
+                  },
+                }
+              );
+            }
+          }
+        }
+      }
+
+      // Handle subscription updates and cancellations
+      if (
+        event.type === "customer.subscription.updated" ||
+        event.type === "customer.subscription.deleted"
+      ) {
+        const subscription = event.data.object;
+        const vendorId = subscription.metadata?.vendorId;
+
+        if (ObjectId.isValid(vendorId)) {
+          const isActive =
+            event.type !== "customer.subscription.deleted" &&
+            ["active", "trialing"].includes(subscription.status);
+
+          await usersCollection.updateOne(
+            {
+              _id: new ObjectId(vendorId),
+              role: "vendor",
+            },
+            {
+              $set: {
+                subscriptionPlan: isActive ? "premium" : "free",
+                subscriptionExpiresAt: isActive
+                  ? new Date(subscription.current_period_end * 1000)
+                  : null,
+                updatedAt: new Date(),
+              },
+            }
+          );
+        }
+      }
+
+      // Save processed event ID
+      await webhookEventsCollection.insertOne({
+        eventId: event.id,
+        eventType: event.type,
+        processedAt: new Date(),
+      });
+
+      return res.status(200).json({
+        received: true,
+      });
+    } catch (error) {
+      if (error.code === 11000) {
+        return res.status(200).json({
+          received: true,
+          duplicate: true,
+        });
+      }
+
+      console.error("Stripe Webhook Processing Error:", error);
+
+      return res.status(500).json({
+        message: "Webhook processing failed",
+      });
+    }
+  }
+);
+
 // JSON Middleware (must stay after the Stripe webhook route)
 app.use(express.json());
 
