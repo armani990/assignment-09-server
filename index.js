@@ -1171,6 +1171,126 @@ app.get(
   }
 );
 
+/* ADMIN: GET DASHBOARD STATISTICS */
+
+app.get(
+  "/admin/dashboard/stats",
+  verifyToken,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const [
+        totalUsers,
+        totalCustomers,
+        totalVendors,
+        totalMenuItems,
+        pendingMenuItems,
+        approvedMenuItems,
+        totalOrders,
+        pendingOrders,
+        acceptedOrders,
+        rejectedOrders,
+        recentOrders,
+      ] = await Promise.all([
+        usersCollection.countDocuments(),
+        usersCollection.countDocuments({ role: "customer" }),
+        usersCollection.countDocuments({ role: "vendor" }),
+        menuItemsCollection.countDocuments(),
+        menuItemsCollection.countDocuments({ status: "pending" }),
+        menuItemsCollection.countDocuments({ status: "approved" }),
+        ordersCollection.countDocuments(),
+        ordersCollection.countDocuments({ status: "pending" }),
+        ordersCollection.countDocuments({ status: "accepted" }),
+        ordersCollection.countDocuments({ status: "rejected" }),
+
+        ordersCollection.aggregate([
+          { $sort: { createdAt: -1 } },
+          { $limit: 5 },
+          {
+            $lookup: {
+              from: "menuItems",
+              localField: "itemId",
+              foreignField: "_id",
+              as: "item",
+            },
+          },
+          {
+            $lookup: {
+              from: "user",
+              localField: "customerId",
+              foreignField: "_id",
+              as: "customer",
+            },
+          },
+          {
+            $lookup: {
+              from: "user",
+              localField: "vendorId",
+              foreignField: "_id",
+              as: "vendor",
+            },
+          },
+          {
+            $project: {
+              status: 1,
+              createdAt: 1,
+              itemName: {
+                $ifNull: [
+                  { $arrayElemAt: ["$item.itemName", 0] },
+                  "Menu item unavailable",
+                ],
+              },
+              customerName: {
+                $ifNull: [
+                  { $arrayElemAt: ["$customer.name", 0] },
+                  "Unknown Customer",
+                ],
+              },
+              vendorName: {
+                $ifNull: [
+                  {
+                    $arrayElemAt: [
+                      "$vendor.businessName",
+                      0,
+                    ],
+                  },
+                  {
+                    $ifNull: [
+                      { $arrayElemAt: ["$vendor.name", 0] },
+                      "Unknown Vendor",
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        ]).toArray(),
+      ]);
+
+      res.status(200).json({
+        stats: {
+          totalUsers,
+          totalCustomers,
+          totalVendors,
+          totalMenuItems,
+          pendingMenuItems,
+          approvedMenuItems,
+          totalOrders,
+          pendingOrders,
+          acceptedOrders,
+          rejectedOrders,
+        },
+        recentOrders,
+      });
+    } catch (error) {
+      console.error("Get Admin Dashboard Stats Error:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch dashboard statistics",
+      });
+    }
+  }
+);
 
 // Start Server
 app.listen(port, () => {
