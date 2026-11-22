@@ -1123,6 +1123,54 @@ app.get("/menu-items", async (req, res) => {
 });
 
 
+/* ADMIN: GET ALL USERS */
+
+app.get(
+  "/admin/users",
+  verifyToken,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const { role } = req.query;
+
+      const filter = {};
+
+      if (role) {
+        const allowedRoles = ["customer", "vendor", "admin"];
+
+        if (!allowedRoles.includes(role)) {
+          return res.status(400).json({
+            message: "Invalid user role",
+          });
+        }
+
+        filter.role = role;
+      }
+
+      const users = await usersCollection
+        .find(filter, {
+          projection: {
+            name: 1,
+            email: 1,
+            image: 1,
+            role: 1,
+            createdAt: 1,
+          },
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.status(200).json(users);
+    } catch (error) {
+      console.error("Get Admin Users Error:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch users",
+      });
+    }
+  }
+);
+
 
 // Start Server
 app.listen(port, () => {
