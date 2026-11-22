@@ -1460,7 +1460,15 @@ app.get(
 
 app.get("/profile", verifyToken, async (req, res) => {
   try {
-    const { name, email, image, role, businessName } = req.authUser;
+    const {
+      name,
+      email,
+      image,
+      role,
+      businessName,
+      subscriptionPlan,
+      subscriptionExpiresAt,
+    } = req.authUser;
 
     res.status(200).json({
       name,
@@ -1468,6 +1476,8 @@ app.get("/profile", verifyToken, async (req, res) => {
       image: image || "",
       role,
       businessName: businessName || "",
+      subscriptionPlan: subscriptionPlan || "free",
+      subscriptionExpiresAt: subscriptionExpiresAt || null,
     });
   } catch (error) {
     console.error("Get Profile Error:", error);
