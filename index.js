@@ -1038,10 +1038,16 @@ app.get("/menu-items", async (req, res) => {
 
     // Filter by category
     if (category?.trim()) {
-      filter.category = {
-        $regex: `^${category.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-        $options: "i",
-      };
+      if (category.trim().toLowerCase() === "chicken pizzas") {
+        filter.category = {
+          $in: [/^Chicken Pizzas$/i, /^Beef Pizzas$/i],
+        };
+      } else {
+        filter.category = {
+          $regex: `^${category.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          $options: "i",
+        };
+      }
     }
 
     // Filter by location
