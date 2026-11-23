@@ -1370,6 +1370,84 @@ app.get("/menu-items", async (req, res) => {
 });
 
 
+/* ADMIN: GET ALL TRANSACTIONS */
+
+app.get(
+    "/admin/transactions",
+    verifyToken,
+    requireRole("admin"),
+    async (req, res) => {
+        try {
+            const { status } = req.query;
+
+            const filter = {};
+
+            if (status) {
+                const allowedStatuses = ["pending", "succeeded"];
+
+                if (!allowedStatuses.includes(status)) {
+                    return res.status(400).json({
+                        message: "Invalid transaction status",
+                    });
+                }
+
+                filter.status = status;
+            }
+
+            const transactions = await transactionsCollection
+                .aggregate([
+                    {
+                        $match: filter,
+                    },
+                    {
+                        $sort: {
+                            createdAt: -1,
+                        },
+                    },
+                    {
+                        $lookup: {
+                            from: "user",
+                            localField: "vendorId",
+                            foreignField: "_id",
+                            as: "vendor",
+                        },
+                    },
+                    {
+                        $unwind: {
+                            path: "$vendor",
+                            preserveNullAndEmptyArrays: true,
+                        },
+                    },
+                    {
+                        $project: {
+                            vendor: {
+                                name: "$vendor.name",
+                                email: "$vendor.email",
+                                businessName: "$vendor.businessName",
+                            },
+                            amount: 1,
+                            currency: 1,
+                            plan: 1,
+                            status: 1,
+                            createdAt: 1,
+                            paidAt: 1,
+                        },
+                    },
+                ])
+                .toArray();
+
+            res.status(200).json(transactions);
+        } catch (error) {
+            console.error("Get Admin Transactions Error:", error);
+
+            res.status(500).json({
+                message: "Failed to fetch transactions",
+            });
+        }
+    }
+);
+
+
 /* ADMIN: GET ALL USERS */
 
 app.get(
