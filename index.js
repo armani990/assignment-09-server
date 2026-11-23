@@ -429,7 +429,9 @@ app.get(
     }
 );
 
-// Admin: Update Menu Item Status
+
+/* ADMIN: UPDATE MENU ITEM STATUS */
+
 app.patch(
     "/admin/menu-items/:id/status",
     verifyToken,
@@ -453,8 +455,60 @@ app.patch(
                 });
             }
 
+            // Find the menu item
+            const menuItem = await menuItemsCollection.findOne({
+                _id: new ObjectId(id),
+            });
+
+            if (!menuItem) {
+                return res.status(404).json({
+                    message: "Menu item not found",
+                });
+            }
+
+            // Check vendor account
+            const vendor = await usersCollection.findOne({
+                _id: menuItem.vendorId,
+                role: "vendor",
+            });
+
+            if (!vendor) {
+                return res.status(404).json({
+                    message: "Vendor account not found",
+                });
+            }
+
+            // Enforce Free plan limit before approval
+            if (
+                status === "approved" &&
+                menuItem.status !== "approved"
+            ) {
+                const isPremiumActive =
+                    vendor.subscriptionPlan === "premium" &&
+                    vendor.subscriptionExpiresAt &&
+                    new Date(vendor.subscriptionExpiresAt) > new Date();
+
+                if (!isPremiumActive) {
+                    const activeMenuCount =
+                        await menuItemsCollection.countDocuments({
+                            vendorId: vendor._id,
+                            status: "approved",
+                        });
+
+                    if (activeMenuCount >= 3) {
+                        return res.status(403).json({
+                            message:
+                                "This vendor has reached the Free plan limit of 3 active menu items. Upgrade to Premium to approve more items.",
+                        });
+                    }
+                }
+            }
+
+            // Update menu item status
             const result = await menuItemsCollection.updateOne(
-                { _id: new ObjectId(id) },
+                {
+                    _id: new ObjectId(id),
+                },
                 {
                     $set: {
                         status,
@@ -481,6 +535,7 @@ app.patch(
         }
     }
 );
+
 
 /* ================================
    VENDOR: GET OWN MENU ITEMS
