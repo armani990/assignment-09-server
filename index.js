@@ -1538,6 +1538,7 @@ app.get(
                 pendingOrders,
                 acceptedOrders,
                 rejectedOrders,
+                cancelledOrders,
                 recentOrders,
             ] = await Promise.all([
                 usersCollection.countDocuments(),
@@ -1550,6 +1551,7 @@ app.get(
                 ordersCollection.countDocuments({ status: "pending" }),
                 ordersCollection.countDocuments({ status: "accepted" }),
                 ordersCollection.countDocuments({ status: "rejected" }),
+                ordersCollection.countDocuments({ status: "cancelled" }),
 
                 ordersCollection.aggregate([
                     { $sort: { createdAt: -1 } },
@@ -1596,12 +1598,7 @@ app.get(
                             },
                             vendorName: {
                                 $ifNull: [
-                                    {
-                                        $arrayElemAt: [
-                                            "$vendor.businessName",
-                                            0,
-                                        ],
-                                    },
+                                    { $arrayElemAt: ["$vendor.businessName", 0] },
                                     {
                                         $ifNull: [
                                             { $arrayElemAt: ["$vendor.name", 0] },
@@ -1627,6 +1624,7 @@ app.get(
                     pendingOrders,
                     acceptedOrders,
                     rejectedOrders,
+                    cancelledOrders,
                 },
                 recentOrders,
             });
