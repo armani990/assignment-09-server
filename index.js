@@ -1275,11 +1275,18 @@ app.get("/menu-items", async (req, res) => {
             };
         }
 
+
         // Filter by category
         if (category?.trim()) {
-            if (category.trim().toLowerCase() === "chicken pizzas") {
+            const normalizedCategory = category.trim().toLowerCase();
+
+            if (normalizedCategory === "chicken pizzas") {
                 filter.category = {
                     $in: [/^Chicken Pizzas$/i, /^Beef Pizzas$/i],
+                };
+            } else if (normalizedCategory === "sides & appetizers") {
+                filter.category = {
+                    $in: [/^Sides & Appetizers$/i, /^Appetizers$/i],
                 };
             } else {
                 filter.category = {
@@ -1288,6 +1295,7 @@ app.get("/menu-items", async (req, res) => {
                 };
             }
         }
+
 
         // Filter by location
         if (location?.trim()) {
