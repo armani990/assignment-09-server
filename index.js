@@ -354,6 +354,27 @@ app.post(
                 });
             }
 
+            // Check vendor subscription and active menu item limit
+            const isPremiumActive =
+                req.authUser.subscriptionPlan === "premium" &&
+                req.authUser.subscriptionExpiresAt &&
+                new Date(req.authUser.subscriptionExpiresAt) > new Date();
+
+            if (!isPremiumActive) {
+                const activeMenuCount =
+                    await menuItemsCollection.countDocuments({
+                        vendorId: req.authUser._id,
+                        status: "approved",
+                    });
+
+                if (activeMenuCount >= 3) {
+                    return res.status(403).json({
+                        message:
+                            "You have reached the Free plan limit of 3 active menu items. Upgrade to Premium to add more menu items.",
+                    });
+                }
+            }
+
             // Prepare menu item
             const newMenuItem = {
                 vendorId: req.authUser._id,
