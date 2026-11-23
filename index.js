@@ -924,6 +924,9 @@ app.post(
             }
 
             // Vendor ID comes from database, never from client
+
+            const createdAt = new Date();
+
             const newOrder = {
                 itemId: menuItem._id,
                 vendorId: menuItem.vendorId,
@@ -932,8 +935,15 @@ app.post(
                 deliveryAddress: deliveryAddress.trim(),
                 message: message?.trim() || "",
                 status: "pending",
-                createdAt: new Date(),
+                statusHistory: [
+                    {
+                        status: "pending",
+                        updatedAt: createdAt,
+                    },
+                ],
+                createdAt,
             };
+
 
             const result = await ordersCollection.insertOne(newOrder);
 
@@ -1007,6 +1017,7 @@ app.get(
                             deliveryAddress: 1,
                             message: 1,
                             status: 1,
+                            statusHistory: 1,
                             createdAt: 1,
 
                             item: {
@@ -1062,6 +1073,12 @@ app.patch(
                     $set: {
                         status: "cancelled",
                         updatedAt: new Date(),
+                    },
+                    $push: {
+                        statusHistory: {
+                            status: "cancelled",
+                            timestamp: new Date(),
+                        },
                     },
                 }
             );
@@ -1217,6 +1234,12 @@ app.patch(
                     $set: {
                         status,
                         updatedAt: new Date(),
+                    },
+                    $push: {
+                        statusHistory: {
+                            status,
+                            updatedAt: new Date(),
+                        },
                     },
                 }
             );
