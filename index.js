@@ -673,6 +673,46 @@ app.patch(
 );
 
 
+/* ADMIN: DELETE MENU ITEM */
+
+app.delete(
+    "/admin/menu-items/:id",
+    verifyToken,
+    requireRole("admin"),
+    async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    message: "Invalid menu item ID",
+                });
+            }
+
+            const result = await menuItemsCollection.deleteOne({
+                _id: new ObjectId(id),
+            });
+
+            if (result.deletedCount === 0) {
+                return res.status(404).json({
+                    message: "Menu item not found",
+                });
+            }
+
+            res.status(200).json({
+                message: "Menu item deleted successfully",
+            });
+        } catch (error) {
+            console.error("Admin Delete Menu Item Error:", error);
+
+            res.status(500).json({
+                message: "Failed to delete menu item",
+            });
+        }
+    }
+);
+
+
 /* ================================
    VENDOR: GET OWN MENU ITEMS
 ================================ */
