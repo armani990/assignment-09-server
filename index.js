@@ -59,6 +59,7 @@ await webhookEventsCollection.createIndex(
 );
 
 
+
 /* STRIPE: VERIFY WEBHOOK AND ACTIVATE PREMIUM */
 
 app.post(
@@ -101,7 +102,9 @@ app.post(
 
                 if (
                     session.mode === "subscription" &&
-                    ["paid", "no_payment_required"].includes(session.payment_status)
+                    ["paid", "no_payment_required"].includes(
+                        session.payment_status
+                    )
                 ) {
                     const vendorId = session.metadata?.vendorId;
 
@@ -110,42 +113,122 @@ app.post(
                             ? session.subscription
                             : session.subscription?.id;
 
-                    if (ObjectId.isValid(vendorId) && subscriptionId) {
-                        const subscription =
-                            await stripe.subscriptions.retrieve(subscriptionId);
+                    // Verify Checkout Session ownership
+                    if (
+                        !ObjectId.isValid(vendorId) ||
+                        session.client_reference_id !== vendorId ||
+                        session.metadata?.plan !== "premium" ||
+                        !subscriptionId
+                    ) {
+                        return res.status(400).json({
+                            message: "Invalid subscription information",
+                        });
+                    }
 
-                        if (["active", "trialing"].includes(subscription.status)) {
-                            await usersCollection.updateOne(
-                                {
-                                    _id: new ObjectId(vendorId),
-                                    role: "vendor",
-                                },
-                                {
-                                    $set: {
-                                        subscriptionPlan: "premium",
-                                        subscriptionExpiresAt: new Date(
-                                            subscription.current_period_end * 1000
-                                        ),
-                                        stripeSubscriptionId: subscription.id,
-                                        stripeCustomerId: session.customer,
-                                        updatedAt: new Date(),
-                                    },
-                                }
-                            );
+                    // Find the original pending transaction
+                    const transaction = await transactionsCollection.findOne({
+                        stripeSessionId: session.id,
+                        vendorId: new ObjectId(vendorId),
+                        status: { $in: ["pending", "succeeded"] },
+                    });
 
-                            await transactionsCollection.updateOne(
-                                {
-                                    stripeSessionId: session.id,
-                                },
-                                {
-                                    $set: {
-                                        status: "succeeded",
-                                        stripeSubscriptionId: subscription.id,
-                                        paidAt: new Date(),
-                                    },
-                                }
-                            );
+                    if (!transaction) {
+                        throw new Error(
+                            "Pending subscription transaction not found"
+                        );
+                    }
+
+                    // Retrieve and verify Stripe Subscription
+                    const subscription =
+                        await stripe.subscriptions.retrieve(subscriptionId);
+
+                    if (
+                        subscription.metadata?.vendorId !== vendorId ||
+                        subscription.metadata?.plan !== "premium" ||
+                        !["active", "trialing"].includes(subscription.status)
+                    ) {
+                        throw new Error(
+                            "Stripe subscription verification failed"
+                        );
+                    }
+
+                    // Verify the Premium monthly price
+                    const premiumSubscriptionItem =
+                        subscription.items.data.find(
+                            (item) =>
+                                item.price?.unit_amount === 999 &&
+                                item.price?.currency === "usd" &&
+                                item.price?.recurring?.interval === "month"
+                        );
+
+                    if (!premiumSubscriptionItem) {
+                        return res.status(400).json({
+                            message: "Invalid Premium subscription price",
+                        });
+                    }
+
+                    // Get subscription expiry timestamp
+                    const periodEnd =
+                        premiumSubscriptionItem.current_period_end ??
+                        subscription.current_period_end;
+
+                    if (
+                        typeof periodEnd !== "number" ||
+                        !Number.isFinite(periodEnd)
+                    ) {
+                        throw new Error(
+                            "Invalid subscription expiry date"
+                        );
+                    }
+
+                    const expiresAt = new Date(periodEnd * 1000);
+
+                    const stripeCustomerId =
+                        typeof session.customer === "string"
+                            ? session.customer
+                            : session.customer?.id;
+
+                    // Activate Premium for the vendor
+                    const userResult = await usersCollection.updateOne(
+                        {
+                            _id: new ObjectId(vendorId),
+                            role: "vendor",
+                        },
+                        {
+                            $set: {
+                                subscriptionPlan: "premium",
+                                subscriptionExpiresAt: expiresAt,
+                                stripeSubscriptionId: subscription.id,
+                                stripeCustomerId,
+                                updatedAt: new Date(),
+                            },
                         }
+                    );
+
+                    if (userResult.matchedCount === 0) {
+                        throw new Error("Vendor account not found");
+                    }
+
+                    // Mark transaction as successful
+                    const transactionResult =
+                        await transactionsCollection.updateOne(
+                            {
+                                _id: transaction._id,
+                                vendorId: new ObjectId(vendorId),
+                            },
+                            {
+                                $set: {
+                                    status: "succeeded",
+                                    stripeSubscriptionId: subscription.id,
+                                    paidAt: transaction.paidAt || new Date(),
+                                },
+                            }
+                        );
+
+                    if (transactionResult.matchedCount === 0) {
+                        throw new Error(
+                            "Failed to update subscription transaction"
+                        );
                     }
                 }
             }
@@ -158,30 +241,61 @@ app.post(
                 const subscription = event.data.object;
                 const vendorId = subscription.metadata?.vendorId;
 
-                if (ObjectId.isValid(vendorId)) {
-                    const isActive =
-                        event.type !== "customer.subscription.deleted" &&
-                        ["active", "trialing"].includes(subscription.status);
+                if (
+                    !ObjectId.isValid(vendorId) ||
+                    subscription.metadata?.plan !== "premium"
+                ) {
+                    return res.status(400).json({
+                        message: "Invalid subscription metadata",
+                    });
+                }
 
-                    await usersCollection.updateOne(
-                        {
-                            _id: new ObjectId(vendorId),
-                            role: "vendor",
+                const isActive =
+                    event.type !== "customer.subscription.deleted" &&
+                    ["active", "trialing"].includes(subscription.status);
+
+                let expiresAt = null;
+
+                if (isActive) {
+                    const subscriptionItem = subscription.items.data[0];
+
+                    const periodEnd =
+                        subscriptionItem?.current_period_end ??
+                        subscription.current_period_end;
+
+                    if (
+                        typeof periodEnd !== "number" ||
+                        !Number.isFinite(periodEnd)
+                    ) {
+                        throw new Error(
+                            "Invalid subscription expiry date"
+                        );
+                    }
+
+                    expiresAt = new Date(periodEnd * 1000);
+                }
+
+                const userResult = await usersCollection.updateOne(
+                    {
+                        _id: new ObjectId(vendorId),
+                        role: "vendor",
+                    },
+                    {
+                        $set: {
+                            subscriptionPlan: isActive ? "premium" : "free",
+                            subscriptionExpiresAt: expiresAt,
+                            stripeSubscriptionId: subscription.id,
+                            updatedAt: new Date(),
                         },
-                        {
-                            $set: {
-                                subscriptionPlan: isActive ? "premium" : "free",
-                                subscriptionExpiresAt: isActive
-                                    ? new Date(subscription.current_period_end * 1000)
-                                    : null,
-                                updatedAt: new Date(),
-                            },
-                        }
-                    );
+                    }
+                );
+
+                if (userResult.matchedCount === 0) {
+                    throw new Error("Vendor account not found");
                 }
             }
 
-            // Save processed event ID
+            // Save processed event ID only after successful processing
             await webhookEventsCollection.insertOne({
                 eventId: event.id,
                 eventType: event.type,
@@ -207,6 +321,7 @@ app.post(
         }
     }
 );
+
 
 // JSON Middleware (must stay after the Stripe webhook route)
 app.use(express.json());
@@ -1816,6 +1931,7 @@ app.post(
 );
 
 
+
 /* VENDOR: VERIFY PREMIUM SUBSCRIPTION PAYMENT */
 
 app.post(
@@ -1833,7 +1949,7 @@ app.post(
                 });
             }
 
-            // Retrieve the Checkout Session directly from Stripe
+            // Retrieve the Checkout Session from Stripe
             const session = await stripe.checkout.sessions.retrieve(
                 sessionId
             );
@@ -1866,146 +1982,45 @@ app.post(
                 });
             }
 
-            // Find the original pending transaction
+            // Check whether the verified webhook processed this transaction
             const transaction = await transactionsCollection.findOne({
                 stripeSessionId: session.id,
                 vendorId: req.authUser._id,
+                status: "succeeded",
             });
 
             if (!transaction) {
-                return res.status(404).json({
+                return res.status(200).json({
                     success: false,
-                    message: "Subscription transaction not found",
+                    pending: true,
+                    message:
+                        "Payment received. Waiting for Stripe webhook confirmation.",
                 });
             }
 
-            if (!["pending", "succeeded"].includes(transaction.status)) {
-                return res.status(400).json({
+            // Confirm that Premium was activated by the webhook
+            const vendor = await usersCollection.findOne({
+                _id: req.authUser._id,
+                role: "vendor",
+                subscriptionPlan: "premium",
+                stripeSubscriptionId: transaction.stripeSubscriptionId,
+                subscriptionExpiresAt: { $gt: new Date() },
+            });
+
+            if (!vendor) {
+                return res.status(200).json({
                     success: false,
-                    message: "This transaction cannot be verified",
+                    pending: true,
+                    message:
+                        "Waiting for Premium subscription activation.",
                 });
             }
-
-            // Retrieve the Stripe Subscription
-            const subscriptionId =
-                typeof session.subscription === "string"
-                    ? session.subscription
-                    : session.subscription?.id;
-
-            if (!subscriptionId) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Subscription information not found",
-                });
-            }
-
-            const subscription =
-                await stripe.subscriptions.retrieve(subscriptionId);
-
-            // Verify subscription ownership and plan
-            if (
-                subscription.metadata?.vendorId !== vendorId ||
-                subscription.metadata?.plan !== "premium"
-            ) {
-                return res.status(403).json({
-                    success: false,
-                    message: "Invalid subscription information",
-                });
-            }
-
-            // Verify subscription status
-            if (!["active", "trialing"].includes(subscription.status)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Subscription is not active",
-                });
-            }
-
-            // Verify the monthly Premium plan price
-            const premiumSubscriptionItem = subscription.items.data.find(
-                (item) =>
-                    item.price?.unit_amount === 999 &&
-                    item.price?.currency === "usd" &&
-                    item.price?.recurring?.interval === "month"
-            );
-
-            if (!premiumSubscriptionItem) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid Premium subscription price",
-                });
-            }
-
-            // Get subscription expiry timestamp
-            const periodEnd =
-                premiumSubscriptionItem.current_period_end ??
-                subscription.current_period_end;
-
-            if (typeof periodEnd !== "number" || !Number.isFinite(periodEnd)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid subscription expiry date",
-                });
-            }
-
-            const expiresAt = new Date(periodEnd * 1000);
-
-            if (Number.isNaN(expiresAt.getTime())) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid subscription expiry date",
-                });
-            }
-
-            const stripeCustomerId =
-                typeof session.customer === "string"
-                    ? session.customer
-                    : session.customer?.id;
-
-            // Activate Premium for the authenticated vendor
-            const userResult = await usersCollection.updateOne(
-                {
-                    _id: req.authUser._id,
-                    role: "vendor",
-                },
-                {
-                    $set: {
-                        subscriptionPlan: "premium",
-                        subscriptionExpiresAt: expiresAt,
-                        stripeSubscriptionId: subscription.id,
-                        stripeCustomerId,
-                        updatedAt: new Date(),
-                    },
-                }
-            );
-
-            if (userResult.matchedCount === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Vendor account not found",
-                });
-            }
-
-            // Mark transaction as successful
-            await transactionsCollection.updateOne(
-                {
-                    _id: transaction._id,
-                    vendorId: req.authUser._id,
-                },
-                {
-                    $set: {
-                        status: "succeeded",
-                        stripeSubscriptionId: subscription.id,
-                        paidAt: transaction.paidAt || new Date(),
-                    },
-                }
-            );
 
             return res.status(200).json({
                 success: true,
-                message: "Premium subscription activated successfully",
-                subscriptionPlan: "premium",
-                subscriptionExpiresAt: expiresAt,
+                message: "Premium subscription verified successfully",
+                subscriptionPlan: vendor.subscriptionPlan,
+                subscriptionExpiresAt: vendor.subscriptionExpiresAt,
             });
         } catch (error) {
             console.error("Verify Subscription Error:", error);
@@ -2017,6 +2032,7 @@ app.post(
         }
     }
 );
+
 
 // Start Server
 app.listen(port, () => {
