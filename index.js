@@ -1771,7 +1771,6 @@ app.get(
     }
 );
 
-
 /* ADMIN: GET ALL USERS */
 
 app.get(
@@ -1780,7 +1779,7 @@ app.get(
     requireRole("admin"),
     async (req, res) => {
         try {
-            const { role } = req.query;
+            const { role, search } = req.query;
 
             const filter = {};
 
@@ -1794,6 +1793,28 @@ app.get(
                 }
 
                 filter.role = role;
+            }
+
+            if (search !== undefined) {
+                if (typeof search !== "string" || search.trim().length > 100) {
+                    return res.status(400).json({
+                        message: "Search must be 100 characters or fewer",
+                    });
+                }
+
+                const searchTerm = search.trim();
+
+                if (searchTerm) {
+                    const escapedSearch = searchTerm.replace(
+                        /[.*+?^${}()|[\]\\]/g,
+                        "\\$&"
+                    );
+
+                    filter.$or = [
+                        { name: { $regex: escapedSearch, $options: "i" } },
+                        { email: { $regex: escapedSearch, $options: "i" } },
+                    ];
+                }
             }
 
             const users = await usersCollection
