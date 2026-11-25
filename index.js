@@ -1856,6 +1856,7 @@ app.get(
                 totalMenuItems,
                 pendingMenuItems,
                 approvedMenuItems,
+                totalTransactions,
                 totalOrders,
                 pendingOrders,
                 acceptedOrders,
@@ -1869,6 +1870,7 @@ app.get(
                 menuItemsCollection.countDocuments(),
                 menuItemsCollection.countDocuments({ status: "pending" }),
                 menuItemsCollection.countDocuments({ status: "approved" }),
+                transactionsCollection.countDocuments(),
                 ordersCollection.countDocuments(),
                 ordersCollection.countDocuments({ status: "pending" }),
                 ordersCollection.countDocuments({ status: "accepted" }),
@@ -1947,6 +1949,7 @@ app.get(
                     acceptedOrders,
                     rejectedOrders,
                     cancelledOrders,
+                    totalTransactions,
                 },
                 recentOrders,
             });
