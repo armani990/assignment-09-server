@@ -908,6 +908,7 @@ app.delete(
 
 
 
+
 /* PUBLIC: GET FEATURED MENU ITEMS */
 app.get("/menu-items/featured", async (req, res) => {
     try {
@@ -915,35 +916,67 @@ app.get("/menu-items/featured", async (req, res) => {
             .find({
                 status: "approved",
             })
-            .sort({ createdAt: -1 })
-            .limit(6)
             .toArray();
 
         const vendorIds = [
             ...new Map(
                 menuItems
                     .filter((item) => item.vendorId)
-                    .map((item) => [String(item.vendorId), item.vendorId])
+                    .map((item) => [
+                        String(item.vendorId),
+                        item.vendorId,
+                    ])
             ).values(),
         ];
 
         const vendors = await usersCollection
-            .find({ _id: { $in: vendorIds } })
+            .find({
+                _id: { $in: vendorIds },
+            })
             .toArray();
 
+        const now = new Date();
+
         const vendorMap = new Map(
-            vendors.map((vendor) => [
-                String(vendor._id),
-                vendor.businessName || vendor.name || "PizzaHub Vendor",
-            ])
+            vendors.map((vendor) => {
+                const isPremium =
+                    vendor.subscriptionPlan === "premium" &&
+                    vendor.subscriptionExpiresAt &&
+                    new Date(vendor.subscriptionExpiresAt) > now;
+
+                return [
+                    String(vendor._id),
+                    {
+                        name:
+                            vendor.businessName ||
+                            vendor.name ||
+                            "PizzaHub Vendor",
+                        isPremium: Boolean(isPremium),
+                    },
+                ];
+            })
         );
 
-        const featuredItems = menuItems.map((item) => ({
-            ...item,
-            vendor: {
-                name: vendorMap.get(String(item.vendorId)) || "PizzaHub Vendor",
-            },
-        }));
+        const featuredItems = menuItems
+            .map((item) => ({
+                ...item,
+                vendor:
+                    vendorMap.get(String(item.vendorId)) || {
+                        name: "PizzaHub Vendor",
+                        isPremium: false,
+                    },
+            }))
+            .sort((a, b) => {
+                if (a.vendor.isPremium !== b.vendor.isPremium) {
+                    return a.vendor.isPremium ? -1 : 1;
+                }
+
+                return (
+                    new Date(b.createdAt || 0) -
+                    new Date(a.createdAt || 0)
+                );
+            })
+            .slice(0, 6);
 
         res.status(200).json(featuredItems);
     } catch (error) {
@@ -954,6 +987,7 @@ app.get("/menu-items/featured", async (req, res) => {
         });
     }
 });
+
 
 
 
