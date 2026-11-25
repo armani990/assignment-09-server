@@ -756,6 +756,103 @@ app.get(
     }
 );
 
+
+/* VENDOR: UPDATE OWN MENU ITEM AVAILABILITY */
+
+app.patch(
+    "/vendor/menu-items/:id/availability",
+    verifyToken,
+    requireRole("vendor"),
+    async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { status } = req.body;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    message: "Invalid menu item ID",
+                });
+            }
+
+            if (!["approved", "inactive"].includes(status)) {
+                return res.status(400).json({
+                    message: "Status must be approved or inactive",
+                });
+            }
+
+            const menuItem = await menuItemsCollection.findOne({
+                _id: new ObjectId(id),
+                vendorId: req.authUser._id,
+            });
+
+            if (!menuItem) {
+                return res.status(404).json({
+                    message: "Menu item not found or you do not own this item",
+                });
+            }
+
+            if (!["approved", "inactive"].includes(menuItem.status)) {
+                return res.status(400).json({
+                    message: "Only approved menu items can change availability",
+                });
+            }
+
+            if (menuItem.status === status) {
+                return res.status(200).json({
+                    message: `Menu item is already ${status}`,
+                });
+            }
+
+            // Check Free plan limit before activating an item
+            if (status === "approved") {
+                const isPremiumActive =
+                    req.authUser.subscriptionPlan === "premium" &&
+                    req.authUser.subscriptionExpiresAt &&
+                    new Date(req.authUser.subscriptionExpiresAt) > new Date();
+
+                if (!isPremiumActive) {
+                    const activeMenuCount =
+                        await menuItemsCollection.countDocuments({
+                            vendorId: req.authUser._id,
+                            status: "approved",
+                        });
+
+                    if (activeMenuCount >= 3) {
+                        return res.status(403).json({
+                            message:
+                                "You have reached the Free plan limit of 3 active menu items. Upgrade to Premium to activate more items.",
+                        });
+                    }
+                }
+            }
+
+            await menuItemsCollection.updateOne(
+                {
+                    _id: menuItem._id,
+                    vendorId: req.authUser._id,
+                },
+                {
+                    $set: {
+                        status,
+                        updatedAt: new Date(),
+                    },
+                }
+            );
+
+            return res.status(200).json({
+                message: `Menu item ${status === "approved" ? "activated" : "deactivated"} successfully`,
+            });
+        } catch (error) {
+            console.error("Update Menu Item Availability Error:", error);
+
+            return res.status(500).json({
+                message: "Failed to update menu item availability",
+            });
+        }
+    }
+);
+
+
 /* ================================
    VENDOR: UPDATE OWN MENU ITEM
 ================================ */
