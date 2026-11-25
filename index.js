@@ -201,6 +201,7 @@ app.post(
                                 stripeSubscriptionId: subscription.id,
                                 stripeCustomerId,
                                 updatedAt: new Date(),
+                                subscriptionCancelAtPeriodEnd: false,
                             },
                         }
                     );
@@ -286,6 +287,8 @@ app.post(
                             subscriptionExpiresAt: expiresAt,
                             stripeSubscriptionId: subscription.id,
                             updatedAt: new Date(),
+                            subscriptionCancelAtPeriodEnd:
+                                isActive && Boolean(subscription.cancel_at_period_end),
                         },
                     }
                 );
@@ -1806,6 +1809,7 @@ app.get("/profile", verifyToken, async (req, res) => {
             businessName,
             subscriptionPlan,
             subscriptionExpiresAt,
+            subscriptionCancelAtPeriodEnd,
         } = req.authUser;
 
         res.status(200).json({
@@ -1816,6 +1820,8 @@ app.get("/profile", verifyToken, async (req, res) => {
             businessName: businessName || "",
             subscriptionPlan: subscriptionPlan || "free",
             subscriptionExpiresAt: subscriptionExpiresAt || null,
+            subscriptionCancelAtPeriodEnd:
+                subscriptionCancelAtPeriodEnd || false,
         });
     } catch (error) {
         console.error("Get Profile Error:", error);
@@ -2073,6 +2079,109 @@ app.post(
     }
 );
 
+
+/* VENDOR: CANCEL PREMIUM SUBSCRIPTION */
+
+app.post(
+    "/vendor/subscription/cancel",
+    verifyToken,
+    requireRole("vendor"),
+    async (req, res) => {
+        try {
+            const vendor = req.authUser;
+
+            if (
+                vendor.subscriptionPlan !== "premium" ||
+                !vendor.stripeSubscriptionId ||
+                !vendor.subscriptionExpiresAt ||
+                new Date(vendor.subscriptionExpiresAt) <= new Date()
+            ) {
+                return res.status(400).json({
+                    message: "No active Premium subscription found",
+                });
+            }
+
+            // Retrieve the existing Stripe subscription
+            const subscription =
+                await stripe.subscriptions.retrieve(
+                    vendor.stripeSubscriptionId
+                );
+
+            // Verify subscription ownership
+            if (
+                subscription.metadata?.vendorId !==
+                String(vendor._id) ||
+                subscription.metadata?.plan !== "premium"
+            ) {
+                return res.status(403).json({
+                    message: "Invalid subscription ownership",
+                });
+            }
+
+            if (
+                !["active", "trialing"].includes(subscription.status)
+            ) {
+                return res.status(400).json({
+                    message: "Subscription is not active",
+                });
+            }
+
+            if (subscription.cancel_at_period_end) {
+                return res.status(200).json({
+                    message: "Subscription is already scheduled for cancellation",
+                    cancelAtPeriodEnd: true,
+                    expiresAt: vendor.subscriptionExpiresAt,
+                });
+            }
+
+            // Cancel only at the end of the current billing period
+            const updatedSubscription =
+                await stripe.subscriptions.update(
+                    subscription.id,
+                    {
+                        cancel_at_period_end: true,
+                    }
+                );
+
+            // Save cancellation schedule without removing Premium access
+            await usersCollection.updateOne(
+                {
+                    _id: vendor._id,
+                    role: "vendor",
+                    stripeSubscriptionId: subscription.id,
+                },
+                {
+                    $set: {
+                        subscriptionCancelAtPeriodEnd: true,
+                        updatedAt: new Date(),
+                    },
+                }
+            );
+
+            const subscriptionItem =
+                updatedSubscription.items.data[0];
+
+            const periodEnd =
+                subscriptionItem?.current_period_end ??
+                updatedSubscription.current_period_end;
+
+            res.status(200).json({
+                message:
+                    "Subscription cancelled. Premium access will remain active until the current billing period ends.",
+                cancelAtPeriodEnd: true,
+                expiresAt: periodEnd
+                    ? new Date(periodEnd * 1000)
+                    : vendor.subscriptionExpiresAt,
+            });
+        } catch (error) {
+            console.error("Cancel Premium Subscription Error:", error);
+
+            res.status(500).json({
+                message: "Failed to cancel Premium subscription",
+            });
+        }
+    }
+);
 
 // Start Server
 app.listen(port, () => {
