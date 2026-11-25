@@ -234,6 +234,7 @@ app.post(
                 }
             }
 
+
             // Handle subscription updates and cancellations
             if (
                 event.type === "customer.subscription.updated" ||
@@ -251,30 +252,35 @@ app.post(
                     });
                 }
 
-                const isActive =
-                    event.type !== "customer.subscription.deleted" &&
-                    ["active", "trialing"].includes(subscription.status);
+                const subscriptionItem = subscription.items.data[0];
+
+                const periodEnd =
+                    subscriptionItem?.current_period_end ??
+                    subscription.current_period_end;
 
                 let expiresAt = null;
 
-                if (isActive) {
-                    const subscriptionItem = subscription.items.data[0];
-
-                    const periodEnd =
-                        subscriptionItem?.current_period_end ??
-                        subscription.current_period_end;
-
-                    if (
-                        typeof periodEnd !== "number" ||
-                        !Number.isFinite(periodEnd)
-                    ) {
-                        throw new Error(
-                            "Invalid subscription expiry date"
-                        );
-                    }
-
+                if (
+                    typeof periodEnd === "number" &&
+                    Number.isFinite(periodEnd)
+                ) {
                     expiresAt = new Date(periodEnd * 1000);
                 }
+
+                const hasValidBillingPeriod =
+                    expiresAt && expiresAt > new Date();
+
+                const isSubscriptionDeleted =
+                    event.type === "customer.subscription.deleted";
+
+                // Keep Premium access during an unexpired billing period,
+                // including Stripe's past_due retry period.
+                const hasPremiumAccess =
+                    !isSubscriptionDeleted &&
+                    hasValidBillingPeriod &&
+                    ["active", "trialing", "past_due"].includes(
+                        subscription.status
+                    );
 
                 const userResult = await usersCollection.updateOne(
                     {
@@ -283,12 +289,17 @@ app.post(
                     },
                     {
                         $set: {
-                            subscriptionPlan: isActive ? "premium" : "free",
-                            subscriptionExpiresAt: expiresAt,
+                            subscriptionPlan: hasPremiumAccess
+                                ? "premium"
+                                : "free",
+                            subscriptionExpiresAt: hasPremiumAccess
+                                ? expiresAt
+                                : null,
                             stripeSubscriptionId: subscription.id,
                             updatedAt: new Date(),
                             subscriptionCancelAtPeriodEnd:
-                                isActive && Boolean(subscription.cancel_at_period_end),
+                                hasPremiumAccess &&
+                                Boolean(subscription.cancel_at_period_end),
                         },
                     }
                 );
@@ -297,6 +308,7 @@ app.post(
                     throw new Error("Vendor account not found");
                 }
             }
+
 
             // Save processed event ID only after successful processing
             await webhookEventsCollection.insertOne({
